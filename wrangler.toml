@@ -11,7 +11,7 @@ workers_dev = false
 [[d1_databases]]
 binding = "DB"
 database_name = "tempik-db"
-database_id = ""
+database_id = "584a2ccc-cdb8-4da4-83c1-6cf9f6811756"
 
 # ---- Email Worker ----
 [email]
@@ -20,15 +20,19 @@ action = "process"
 # ---- Custom domain routes ----
 # CHANGE THIS to your own domain (e.g. tempik.example.com)
 [[routes]]
-pattern = "tempik.YOURDOMAIN.com"
+pattern = "tempmail.pakuan.web.id"
 custom_domain = true
 
 # ---- Environment variables ----
 # CHANGE THESE to your own domain
 [vars]
 APP_NAME = "Tempik"
-MAIL_DOMAIN = "YOURDOMAIN.com"
-WEB_HOST = "tempik.YOURDOMAIN.com"
+MAIL_DOMAIN = "pakuan.web.id"
+WEB_HOST = "tempmail.pakuan.web.id"
+
+# ---- Retention cleanup ----
+[triggers]
+crons = ["17 */6 * * *"]
 
 # ---- Static assets (web frontend) ----
 [assets]

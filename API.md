@@ -46,7 +46,7 @@ Returns the public app configuration.
 
 ### GET `/api/session`
 
-Creates or retrieves an anonymous browser session. If you pass an existing `x-session-id`, it returns the same ID. If you don't, it generates a new one.
+Creates or retrieves an anonymous browser session. If you don't pass `x-session-id`, it generates a new session. If you pass `x-session-id`, it must be a valid UUID for an existing session.
 
 **Headers**
 
@@ -100,7 +100,8 @@ Lists all inboxes linked to your session.
 
 | Status | Message | Meaning |
 |---|---|---|
-| `400` | `Missing x-session-id` | No session header provided |
+| `400` | `Missing x-session-id` / `Invalid x-session-id` | No session header or malformed UUID provided |
+| `401` | `Unknown session` | Session ID was not created by `/api/session` |
 
 **Usage**
 
@@ -113,7 +114,7 @@ curl -s https://YOUR_DOMAIN/api/inboxes \
 
 ### POST `/api/inboxes`
 
-Creates a new inbox (or claims an existing one) and links it to your session.
+Creates a new inbox and links it to your session. Existing inboxes cannot be claimed from another session.
 
 **Headers**
 
@@ -126,7 +127,7 @@ Creates a new inbox (or claims an existing one) and links it to your session.
 
 | Field | Required | Description |
 |---|---|---|
-| `localPart` | No | Custom username (e.g. `"myname"`). Omit for a random address. |
+| `localPart` | No | Custom username (e.g. `"myname"`). Omit for a random address. Must be 1-64 lowercase letters, numbers, dots, underscores, or hyphens; must start/end with a letter or number; `..` is rejected. |
 | `domain` | No | Domain override. Must be one of the allowed domains from `GET /api/config`'s `mailDomains`. Defaults to the first configured domain. Invalid domains are rejected with `400`. |
 
 **Examples**
@@ -166,11 +167,15 @@ Creates a new inbox (or claims an existing one) and links it to your session.
 
 | Status | Message | Meaning |
 |---|---|---|
-| `400` | `Missing x-session-id` | No session header provided |
-| `400` | `Invalid domain: ...` | Requested domain is not in the allowed list. Check `GET /config`'s `mailDomains`. |
+| `400` | `Missing x-session-id` / `Invalid x-session-id` | No session header or malformed UUID provided |
+| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `400` | `Invalid domain: ...` / `Invalid localPart...` | Requested domain or username is invalid. |
+| `409` | `Inbox unavailable` | The requested custom inbox already exists outside this session. |
+| `429` | `Rate limit exceeded` | Too many inbox creation attempts. |
 
 **Notes**
-- If the address already exists, it simply links the existing inbox to your session
+- Existing inboxes are not claimable from another session; custom duplicates return `409`
+- Each session can have up to 10 inboxes
 - Random addresses are human-readable Indonesian-style (e.g. `kopihujan42`, `bulanbiru17`)
 - The generator checks the actual database for uniqueness — it never creates duplicates, even across different sessions
 
@@ -194,7 +199,7 @@ curl -s -X POST https://YOUR_DOMAIN/api/inboxes \
 
 ### DELETE `/api/inboxes/:address`
 
-Removes an inbox from your session. Does **not** delete the inbox or its messages from the database — it just unlinks it from your session so it no longer appears in your list.
+Removes an inbox from your session. If no other session links to that inbox, its messages and inbox row are deleted from the database.
 
 **Headers**
 
@@ -211,14 +216,16 @@ Removes an inbox from your session. Does **not** delete the inbox or its message
 **Response** `200 OK`
 
 ```json
-{ "ok": true }
+{ "ok": true, "deleted": true }
 ```
 
 **Errors**
 
 | Status | Message | Meaning |
 |---|---|---|
-| `400` | `Missing x-session-id` | No session header |
+| `400` | `Missing x-session-id` / `Invalid x-session-id` / `Invalid address` | Missing or invalid request data |
+| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `403` | `Inbox not in this session` | The inbox is not linked to your session |
 
 **Usage**
 
@@ -231,7 +238,7 @@ curl -s -X DELETE "https://YOUR_DOMAIN/api/inboxes/test123%40example.com" \
 
 ### GET `/api/inboxes/:address/messages`
 
-Fetches all messages for a given inbox. The inbox must be linked to your session.
+Fetches paginated messages for a given inbox. The inbox must be linked to your session.
 
 **Headers**
 
@@ -245,27 +252,41 @@ Fetches all messages for a given inbox. The inbox must be linked to your session
 |---|---|
 | `address` | Full email address, URI-encoded. |
 
+**Query Parameters**
+
+| Param | Description |
+|---|---|
+| `limit` | Messages per page, 1-100. Defaults to 50. |
+| `offset` | Zero-based offset. Defaults to 0. |
+
 **Response** `200 OK`
 
 ```json
-[
-  {
-    "id": "msg_1782461413912_0956a83c",
-    "inbox_address": "test123@example.com",
-    "from_address": "someone@gmail.com",
-    "subject": "Hello",
-    "body": "This is the email body",
-    "received_at": "2026-06-26 08:10:14"
-  }
-]
+{
+  "messages": [
+    {
+      "id": "msg_1782461413912_0956a83c",
+      "inbox_address": "test123@example.com",
+      "from_address": "someone@gmail.com",
+      "subject": "Hello",
+      "body": "This is the email body",
+      "received_at": "2026-06-26 08:10:14"
+    }
+  ],
+  "limit": 50,
+  "offset": 0,
+  "nextOffset": null
+}
 ```
 
 **Errors**
 
 | Status | Message | Meaning |
 |---|---|---|
-| `400` | `Missing x-session-id` | No session header |
-| `403` | `Inbox not in this session` | The inbox exists but is not linked to your session. Use `POST /api/inboxes` with the matching `localPart` to claim it first. |
+| `400` | `Missing x-session-id` / `Invalid x-session-id` / `Invalid address` | Missing or invalid request data |
+| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `403` | `Inbox not in this session` | The inbox is not linked to your session |
+| `403` | `Inbox not in this session` | The inbox is not linked to your session. Existing inboxes cannot be claimed from another session. |
 
 **Usage**
 
@@ -320,9 +341,12 @@ All error responses follow this format:
 
 | Status | When |
 |---|---|
-| `400` | Missing `x-session-id` header, or invalid domain in POST `/api/inboxes` |
-| `403` | Unauthorized — inbox not linked to your session |
+| `400` | Missing/invalid `x-session-id`, invalid address, invalid domain, or invalid `localPart` |
+| `401` | Unknown session |
+| `403` | Inbox quota exceeded, or inbox not linked to your session |
 | `404` | Route not found |
+| `409` | Custom inbox is unavailable |
+| `429` | Rate limit exceeded |
 
 ---
 
@@ -336,4 +360,15 @@ Tempik uses per-browser anonymous sessions:
 | After creating inbox A | Only inbox A appears in that browser |
 | Open in incognito | Empty — different session |
 | Refresh same browser | Inboxes persist (via `localStorage`) |
-| Send email to inbox A | Inbox A gets it instantly (email handler auto-creates inbox record) |
+| Send email to inbox A | Inbox A gets it instantly if the recipient matches an allowed `MAIL_DOMAIN` |
+
+## Limits and retention
+
+- Custom inboxes cannot claim addresses that already exist outside your session.
+- Each session can keep up to 10 inboxes.
+- Inbox creation is rate-limited per session and per IP.
+- Message reads are paginated with `limit`/`offset`.
+- Stored email body text is capped at 200,000 characters.
+- Each inbox keeps the newest 100 messages.
+- A scheduled cleanup runs every 6 hours and removes messages older than 7 days plus orphan rows.
+- Logs avoid full email addresses, subjects, and message bodies.

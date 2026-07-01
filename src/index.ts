@@ -2,6 +2,12 @@ import api from './api/routes';
 import { handleEmail } from './email-handler';
 import type { EmailHandlerEnv } from './email-handler';
 import type { ApiEnv } from './api/routes';
+import {
+  cleanupRateLimits,
+  deleteOldMessages,
+  deleteOrphanInboxes,
+  deleteOrphanSessions,
+} from './db/queries';
 
 /**
  * Tempik - Disposable Temp Mail on Cloudflare Workers
@@ -13,6 +19,9 @@ import type { ApiEnv } from './api/routes';
 
 // Combined env bindings
 export interface Env extends ApiEnv, EmailHandlerEnv {}
+
+const RETENTION_DAYS = 7;
+const RATE_LIMIT_RETENTION_SECONDS = 60 * 60;
 
 export default {
   /**
@@ -40,5 +49,12 @@ export default {
    */
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
     await handleEmail(message, env);
+  },
+
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await deleteOldMessages(env.DB, RETENTION_DAYS);
+    await deleteOrphanInboxes(env.DB);
+    await deleteOrphanSessions(env.DB, RETENTION_DAYS);
+    await cleanupRateLimits(env.DB, RATE_LIMIT_RETENTION_SECONDS);
   },
 };

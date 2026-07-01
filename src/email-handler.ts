@@ -1,10 +1,32 @@
 import PostalMime from 'postal-mime';
 import type { D1Database } from '@cloudflare/workers-types';
-import { createInbox, inboxExists, insertMessage } from './db/queries';
+import {
+  createInbox,
+  deleteOldestMessagesForInbox,
+  inboxExists,
+  insertMessage,
+} from './db/queries';
+import { buildAddress, getDomains, isAllowedAddress, parseAddress } from './utils/email-address';
 
 export interface EmailHandlerEnv {
   DB: D1Database;
   MAIL_DOMAIN: string;
+}
+
+const MAX_EMAIL_BODY_CHARS = 200_000;
+const MAX_MESSAGES_PER_INBOX = 100;
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
 }
 
 /**
@@ -12,29 +34,34 @@ export interface EmailHandlerEnv {
  * Called for every email received at any @<MAIL_DOMAIN> address.
  */
 export async function handleEmail(message: ForwardableEmailMessage, env: EmailHandlerEnv): Promise<void> {
-  const to = message.to.toLowerCase();
-  const from = message.from.toLowerCase();
-
-  console.log(`[email] Received from=${from} to=${to}`);
+  console.log('[email] received');
 
   try {
-    // Read raw email stream
-    const rawStream = message.raw;
-    const parser = new PostalMime();
-    const parsed = await parser.parse(rawStream);
+    const rawTo = message.to.toLowerCase();
+    const parsedTo = parseAddress(rawTo);
+    const domains = getDomains(env.MAIL_DOMAIN);
 
-    const subject = parsed.subject || '(no subject)';
-    const body = parsed.text?.trim() || parsed.html || '';
+    if (!parsedTo || !isAllowedAddress(rawTo, domains)) {
+      console.log('[email] rejected invalid recipient');
+      return;
+    }
+
+    const to = buildAddress(parsedTo.localPart, parsedTo.domain);
+    const from = message.from.toLowerCase();
+    const parser = new PostalMime();
+    const parsed = await parser.parse(message.raw);
+
+    const subject = truncate(parsed.subject || '(no subject)', 500);
+    const rawBody = parsed.text?.trim() || (parsed.html ? stripHtml(parsed.html) : '');
+    const body = truncate(rawBody, MAX_EMAIL_BODY_CHARS);
 
     const db = env.DB;
 
-    // Auto-create inbox if doesn't exist
     if (!(await inboxExists(db, to))) {
       await createInbox(db, to);
-      console.log(`[email] Created new inbox: ${to}`);
+      console.log('[email] created inbox');
     }
 
-    // Store the message
     const msgId = `msg_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     await insertMessage(db, {
       id: msgId,
@@ -43,10 +70,11 @@ export async function handleEmail(message: ForwardableEmailMessage, env: EmailHa
       subject,
       body,
     });
+    await deleteOldestMessagesForInbox(db, to, MAX_MESSAGES_PER_INBOX);
 
-    console.log(`[email] Stored message ${msgId} for ${to}`);
+    console.log('[email] stored message');
   } catch (err) {
-    console.error(`[email] Failed to process email for ${to}:`, err);
-    // Don't throw — we don't want to bounce; just log
+    const messageText = err instanceof Error ? err.message : String(err);
+    console.error(`[email] failed to process message: ${messageText}`);
   }
 }

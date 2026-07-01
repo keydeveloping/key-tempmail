@@ -33,3 +33,10 @@ CREATE TABLE IF NOT EXISTS session_inboxes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_inboxes_session ON session_inboxes(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_inboxes_inbox ON session_inboxes(inbox_address);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);

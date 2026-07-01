@@ -2,7 +2,7 @@
 
 Tempik is a **self-hosted disposable email** service that runs entirely on **Cloudflare Workers** — no VPS required. It uses Cloudflare Email Workers to receive inbound email, D1 for storage, and serves a clean web UI from the edge.
 
-> **Repo**: [github.com/hirotomasato/tempik](https://github.com/hirotomasato/tempik)
+> **Repo**: [github.com/keydeveloping/key-tempmail](https://github.com/keydeveloping/key-tempmail)
 
 ---
 
@@ -41,8 +41,8 @@ Before you start, you need:
 ## Step 1 — Clone & install dependencies
 
 ```bash
-git clone https://github.com/hirotomasato/tempik.git
-cd tempik
+git clone https://github.com/keydeveloping/key-tempmail.git
+cd key-tempmail
 npm install
 ```
 
@@ -104,6 +104,9 @@ WEB_HOST = "tempik.YOURDOMAIN.com"
 [assets]
 directory = "./src/web"
 
+[triggers]
+crons = ["17 */6 * * *"]
+
 [observability]
 enabled = true
 ```
@@ -143,11 +146,12 @@ Push the schema to your **remote** D1 database on Cloudflare:
 npx wrangler d1 execute tempik-db --remote --file=src/db/schema.sql
 ```
 
-This creates four tables:
+This creates five tables:
 - `inboxes` — email addresses
 - `messages` — received emails
 - `sessions` — browser session tokens
 - `session_inboxes` — which inboxes belong to which session
+- `rate_limits` — short-lived API rate-limit counters
 
 > **Note:** The `--remote` flag is important — without it, the schema only applies locally. You want it on Cloudflare's servers.
 
@@ -164,12 +168,15 @@ This does three things:
 2. Uploads the static frontend files (HTML/CSS/JS) to Cloudflare Assets (edge CDN)
 3. Registers the custom domain route
 
-After a successful deploy, you'll see:
+After a successful deploy, you'll see the custom domain and the cleanup schedule:
 
-```
+```txt
 Deployed tempik triggers
   tempik.YOURDOMAIN.com (custom domain)
+  schedule: 17 */6 * * *
 ```
+
+If schedule deployment fails with `You need a workers.dev subdomain`, open **Cloudflare Dashboard → Workers & Pages** once and set an account `workers.dev` subdomain, then rerun `npx wrangler deploy`. You can keep the `workers.dev` route disabled; the subdomain is still required by Cloudflare for cron schedules.
 
 ---
 
@@ -182,32 +189,73 @@ Cloudflare automatically creates the DNS record for your Worker's custom domain.
 - Go to **Cloudflare Dashboard → Workers & Pages → tempik → Settings → Domains**
 - The custom domain `tempik.YOURDOMAIN.com` should already be listed
 
-### 7b. MX Records (automatic with Email Routing)
+### 7b. Enable Email Routing
 
-Email Routing should already be enabled on your domain. Verify:
+Enable Email Routing for your mail domain:
+
+```bash
+npx wrangler email routing enable YOURDOMAIN.com
+```
+
+Verify the status:
 
 ```bash
 npx wrangler email routing settings YOURDOMAIN.com
 ```
 
-It should show `Enabled: true`. The catch-all rule is also automatically set up — every `*@YOURDOMAIN.com` is routed to the `tempik` Worker:
+Expected output:
+
+```txt
+Enabled:  true
+Status:   ready
+```
+
+### 7c. Verify MX/SPF/DKIM records
+
+Show the DNS records Cloudflare expects:
 
 ```bash
-npx wrangler email routing rules list YOURDOMAIN.com
+npx wrangler email routing dns get YOURDOMAIN.com
+```
+
+Verify DNS propagation:
+
+```bash
+dig MX YOURDOMAIN.com +short
+dig TXT YOURDOMAIN.com +short
+dig TXT cf2024-1._domainkey.YOURDOMAIN.com +short
+```
+
+You should see three `route*.mx.cloudflare.net` MX records, an SPF TXT record, and a DKIM TXT record. Add any missing records in Cloudflare DNS.
+
+### 7d. Route catch-all email to the Worker
+
+Open **Cloudflare Dashboard → your domain → Email → Email Routing → Routing rules**.
+
+Enable the existing **Catch-all** rule and set:
+
+| Field | Value |
+|---|---|
+| Action | Send to a Worker |
+| Destination | `tempik` |
+| Status | Active |
+
+Verify from CLI:
+
+```bash
+npx wrangler email routing rules get YOURDOMAIN.com catch-all
 ```
 
 Expected output:
+
+```txt
+Catch-all rule:
+  Enabled: true
+  Actions:
+    - worker: tempik
 ```
-Catch-all rule: enabled, action: worker:tempik
-```
 
-### 7c. SPF Record (optional but recommended)
-
-If you don't already have an SPF record, add one so emails don't get flagged as spam:
-
-| Type | Name | Content |
-|---|---|---|
-| TXT | `@` | `v=spf1 include:_spf.mx.cloudflare.net ~all` |
+> Note: In Wrangler 4.106, `email routing rules update ... catch-all --action-type worker` may fail even though the Dashboard supports catch-all → Worker. Use the Dashboard toggle for this step.
 
 ---
 
@@ -227,6 +275,7 @@ If you don't already have an SPF record, add one so emails don't get flagged as 
 | `npm run deploy` | Deploy Worker + static assets |
 | `npm run db:migrate` | Apply schema to production D1 |
 | `npm run db:local` | Apply schema to local D1 (for dev) |
+| `npm run typecheck` | Run TypeScript type checks |
 | `npx wrangler dev` | Run Worker locally |
 | `npx wrangler tail` | Stream live logs from production |
 | `npx wrangler d1 execute tempik-db --remote --command="SELECT * FROM messages LIMIT 10"` | Query the database |
@@ -243,14 +292,14 @@ npx wrangler d1 execute tempik-db --remote --command="SELECT * FROM messages ORD
 npx wrangler tail --format pretty
 ```
 
-Then send a test email — you'll see the Worker processing it in real time.
+Then send a test email — you'll see the Worker processing it in real time. Logs avoid full email addresses, subjects, and message bodies.
 
 ---
 
 ## Project structure
 
 ```
-tempik/
+key-tempmail/
 ├── wrangler.toml              # Worker config, D1 binding, routes, env vars
 ├── package.json
 ├── tsconfig.json
@@ -261,10 +310,11 @@ tempik/
     ├── api/
     │   └── routes.ts          # Hono router: /api/config, /api/session, /api/inboxes, /api/messages
     ├── db/
-    │   ├── schema.sql         # D1 tables (inboxes, messages, sessions, session_inboxes)
+    │   ├── schema.sql         # D1 tables (inboxes, messages, sessions, session_inboxes, rate_limits)
     │   └── queries.ts         # Typed query functions
     ├── utils/
-    │   └── random-address.ts  # Human-like random email generator
+    │   ├── random-address.ts  # Human-like random email generator
+    │   └── email-address.ts   # Address/domain validation helpers
     └── web/
         ├── index.html         # Frontend UI
         ├── app.js             # Frontend logic (vanilla JS)
@@ -287,6 +337,20 @@ tempik/
 
 ---
 
+## Security and privacy defaults
+
+- Custom inboxes cannot claim addresses that already exist outside the current session.
+- Session headers must be valid sessions created by `/api/session`.
+- Custom usernames are validated before an email address is created.
+- Email content is rendered as text in the UI, not HTML.
+- Inbox creation is rate-limited and capped at 10 inboxes per session.
+- Message reads are paginated.
+- Each inbox keeps the newest 100 messages; scheduled cleanup removes messages older than 7 days.
+- Inbound email is accepted only for configured `MAIL_DOMAIN` values.
+- Worker logs avoid full email addresses, subjects, and message bodies.
+
+---
+
 ## Troubleshooting
 
 ### "This site can't be reached / DNS_PROBE_FINISHED_NXDOMAIN"
@@ -301,12 +365,17 @@ Should show `*.ns.cloudflare.com`. Propagation can take up to 24 hours after cha
 
 ### Emails not appearing in the web UI
 
-1. The email was received but the inbox hasn't been linked to your browser session. Click **New** → type the exact local-part → click **Create** to claim it.
-2. Check the database:
+1. Confirm catch-all routing is active:
+   ```bash
+   npx wrangler email routing rules get YOURDOMAIN.com catch-all
+   ```
+   It should show `Enabled: true` and `worker: tempik`.
+2. Make sure the inbox was created in the same browser session before reading it. Existing inboxes cannot be claimed from another session.
+3. Check the database:
    ```bash
    npx wrangler d1 execute tempik-db --remote --command="SELECT * FROM messages ORDER BY received_at DESC LIMIT 5;"
    ```
-3. Check live logs:
+4. Check live logs:
    ```bash
    npx wrangler tail --format pretty
    ```
@@ -331,4 +400,4 @@ MIT
 
 ---
 
-Developer by [masantoid](https://github.com/hirotomasato)
+Forked from [masantoid/tempik](https://github.com/hirotomasato/tempik). Maintained at [keydeveloping/key-tempmail](https://github.com/keydeveloping/key-tempmail).

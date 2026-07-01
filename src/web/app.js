@@ -41,6 +41,30 @@ async function fetchJson(url, options = {}) {
   return res.json();
 }
 
+function emptyState(icon, title, sub) {
+  const root = document.createElement('div');
+  root.className = 'empty-state';
+
+  const iconEl = document.createElement('div');
+  iconEl.className = 'icon';
+  iconEl.textContent = icon;
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'title';
+  titleEl.textContent = title;
+
+  const subEl = document.createElement('div');
+  subEl.className = 'sub';
+  subEl.textContent = sub;
+
+  root.append(iconEl, titleEl, subEl);
+  return root;
+}
+
+function showError(message) {
+  messageList.replaceChildren(emptyState('⚠️', 'Connection error', message));
+}
+
 async function loadConfig() {
   appConfig = await fetchJson('/api/config', { headers: {} });
   document.title = appConfig.appName;
@@ -50,7 +74,7 @@ async function loadConfig() {
 
   // Populate domain selector
   const domains = appConfig.mailDomains || [appConfig.mailDomain];
-  domainSelect.innerHTML = '';
+  domainSelect.replaceChildren();
   domains.forEach((d) => {
     const opt = document.createElement('option');
     opt.value = d;
@@ -61,14 +85,23 @@ async function loadConfig() {
 }
 
 async function ensureSession() {
-  const payload = await fetchJson('/api/session');
-  sessionId = payload.sessionId;
-  localStorage.setItem(SESSION_KEY, sessionId);
+  try {
+    const payload = await fetchJson('/api/session');
+    sessionId = payload.sessionId;
+    localStorage.setItem(SESSION_KEY, sessionId);
+  } catch (err) {
+    if (!sessionId) throw err;
+    localStorage.removeItem(SESSION_KEY);
+    sessionId = '';
+    const payload = await fetchJson('/api/session');
+    sessionId = payload.sessionId;
+    localStorage.setItem(SESSION_KEY, sessionId);
+  }
 }
 
 async function loadInboxes(selectedAddress) {
   const inboxes = await fetchJson('/api/inboxes');
-  inboxSelect.innerHTML = '';
+  inboxSelect.replaceChildren();
 
   if (!inboxes.length) {
     const opt = document.createElement('option');
@@ -76,7 +109,7 @@ async function loadInboxes(selectedAddress) {
     opt.textContent = 'Belum ada inbox';
     inboxSelect.appendChild(opt);
     currentInbox.textContent = 'No inbox selected';
-    messageList.innerHTML = '<div class="empty-state"><div class="icon">📬</div><div class="title">No inboxes yet</div><div class="sub">Click <b>New</b> to create a disposable email address.</div></div>';
+    messageList.replaceChildren(emptyState('📬', 'No inboxes yet', 'Click New to create a disposable email address.'));
     messageCount.textContent = '0 messages';
     return;
   }
@@ -95,25 +128,38 @@ async function loadInboxes(selectedAddress) {
   await loadMessages();
 }
 
+function renderMessage(msg) {
+  const item = document.createElement('div');
+  item.className = 'message-item';
+
+  const meta = document.createElement('div');
+  meta.className = 'message-meta';
+  meta.textContent = `From: ${msg.from_address} • ${new Date(msg.received_at).toLocaleString()}`;
+
+  const subject = document.createElement('strong');
+  subject.textContent = msg.subject || '(no subject)';
+
+  const body = document.createElement('p');
+  body.textContent = msg.body || '';
+
+  item.append(meta, subject, body);
+  return item;
+}
+
 async function loadMessages() {
   const address = inboxSelect.value;
   if (!address) return;
   currentInbox.textContent = address;
-  const messages = await fetchJson(`/api/inboxes/${encodeURIComponent(address)}/messages`);
+  const payload = await fetchJson(`/api/inboxes/${encodeURIComponent(address)}/messages?limit=100&offset=0`);
+  const messages = Array.isArray(payload) ? payload : payload.messages;
   messageCount.textContent = `${messages.length} messages`;
 
   if (!messages.length) {
-    messageList.innerHTML = '<div class="empty-state"><div class="icon">✉️</div><div class="title">Inbox empty</div><div class="sub">Emails sent to this address will appear here.</div></div>';
+    messageList.replaceChildren(emptyState('✉️', 'Inbox empty', 'Emails sent to this address will appear here.'));
     return;
   }
 
-  messageList.innerHTML = messages.map((msg) => `
-    <div class="message-item">
-      <div class="message-meta">From: ${msg.from_address} • ${new Date(msg.received_at).toLocaleString()}</div>
-      <strong>${msg.subject}</strong>
-      <p>${msg.body}</p>
-    </div>
-  `).join('');
+  messageList.replaceChildren(...messages.map(renderMessage));
 }
 
 function showToast(text) {
@@ -131,9 +177,9 @@ copyBtn.addEventListener('click', async () => {
   showToast('📋 Copied to clipboard');
 });
 
-refreshBtn.addEventListener('click', loadMessages);
+refreshBtn.addEventListener('click', () => loadMessages().catch((err) => showError(err.message)));
 newBtn.addEventListener('click', () => newBox.classList.toggle('hidden'));
-inboxSelect.addEventListener('change', loadMessages);
+inboxSelect.addEventListener('change', () => loadMessages().catch((err) => showError(err.message)));
 
 deleteBtn.addEventListener('click', async () => {
   if (!inboxSelect.value) return;
@@ -166,5 +212,5 @@ createRandomBtn.addEventListener('click', async () => {
 
 Promise.all([loadConfig(), ensureSession()]).then(() => loadInboxes()).catch((err) => {
   console.error(err);
-  messageList.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><div class="title">Connection error</div><div class="sub">${err.message}</div></div>`;
+  showError(err.message);
 });
