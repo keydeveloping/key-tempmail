@@ -15,9 +15,9 @@ const appTitle = document.getElementById('appTitle');
 const appSubtitle = document.getElementById('appSubtitle');
 
 let appConfig = {
-  appName: 'Tempik',
-  mailDomain: 'example.com',
-  webHost: 'tempik.example.com'
+  appName: 'Pakuan Mail',
+  mailDomain: 'pakuan.web.id',
+  webHost: 'tempmail.pakuan.web.id'
 };
 
 const SESSION_KEY = 'tempik_session_id';
@@ -69,7 +69,7 @@ async function loadConfig() {
   appConfig = await fetchJson('/api/config', { headers: {} });
   document.title = appConfig.appName;
   appTitle.textContent = appConfig.appName;
-  appSubtitle.textContent = `Disposable inbox for ${appConfig.mailDomain}`;
+  appSubtitle.textContent = `Private disposable inbox for ${appConfig.mailDomain}`;
   localPartInput.placeholder = `username atau kosongkan untuk random @${appConfig.mailDomain}`;
 
   // Populate domain selector
@@ -109,7 +109,7 @@ async function loadInboxes(selectedAddress) {
     opt.textContent = 'Belum ada inbox';
     inboxSelect.appendChild(opt);
     currentInbox.textContent = 'No inbox selected';
-    messageList.replaceChildren(emptyState('📬', 'No inboxes yet', 'Click New to create a disposable email address.'));
+    messageList.replaceChildren(emptyState('📬', 'No Pakuan inboxes yet', 'Click New to create a private disposable address.'));
     messageCount.textContent = '0 messages';
     return;
   }
@@ -155,7 +155,7 @@ async function loadMessages() {
   messageCount.textContent = `${messages.length} messages`;
 
   if (!messages.length) {
-    messageList.replaceChildren(emptyState('✉️', 'Inbox empty', 'Emails sent to this address will appear here.'));
+    messageList.replaceChildren(emptyState('✉️', 'Inbox empty', 'Emails sent to this Pakuan Mail address will appear here.'));
     return;
   }
 

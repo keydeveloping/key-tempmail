@@ -26,7 +26,7 @@ custom_domain = true
 # ---- Environment variables ----
 # CHANGE THESE to your own domain
 [vars]
-APP_NAME = "Tempik"
+APP_NAME = "Pakuan Mail"
 MAIL_DOMAIN = "pakuan.web.id"
 WEB_HOST = "tempmail.pakuan.web.id"
 
