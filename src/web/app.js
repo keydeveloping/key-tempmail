@@ -1,3 +1,8 @@
+const authGate = document.getElementById('authGate');
+const mainApp = document.getElementById('mainApp');
+const passwordInput = document.getElementById('passwordInput');
+const loginBtn = document.getElementById('loginBtn');
+const authError = document.getElementById('authError');
 const inboxSelect = document.getElementById('inboxSelect');
 const copyBtn = document.getElementById('copyBtn');
 const refreshBtn = document.getElementById('refreshBtn');
@@ -13,6 +18,10 @@ const messageCount = document.getElementById('messageCount');
 const messageList = document.getElementById('messageList');
 const appTitle = document.getElementById('appTitle');
 const appSubtitle = document.getElementById('appSubtitle');
+const apiKeyNameInput = document.getElementById('apiKeyNameInput');
+const createApiKeyBtn = document.getElementById('createApiKeyBtn');
+const apiKeyList = document.getElementById('apiKeyList');
+const newApiKeyOutput = document.getElementById('newApiKeyOutput');
 
 let appConfig = {
   appName: 'Pakuan Mail',
@@ -22,6 +31,14 @@ let appConfig = {
 
 const SESSION_KEY = 'tempik_session_id';
 let sessionId = localStorage.getItem(SESSION_KEY) || '';
+
+function parseError(text) {
+  try {
+    return JSON.parse(text).error || text;
+  } catch {
+    return text;
+  }
+}
 
 async function fetchJson(url, options = {}) {
   const headers = {
@@ -37,8 +54,28 @@ async function fetchJson(url, options = {}) {
     ...options,
     headers
   });
-  if (!res.ok) throw new Error(await res.text());
+
+  if (res.status === 401 && url !== '/api/auth') {
+    showLogin('Session locked. Enter password again.');
+  }
+
+  if (!res.ok) throw new Error(parseError(await res.text()));
   return res.json();
+}
+
+function showLogin(message = '') {
+  localStorage.removeItem(SESSION_KEY);
+  sessionId = '';
+  mainApp.classList.add('hidden');
+  authGate.classList.remove('hidden');
+  authError.textContent = message;
+  passwordInput.focus();
+}
+
+function showApp() {
+  authGate.classList.add('hidden');
+  mainApp.classList.remove('hidden');
+  authError.textContent = '';
 }
 
 function emptyState(icon, title, sub) {
@@ -63,6 +100,26 @@ function emptyState(icon, title, sub) {
 
 function showError(message) {
   messageList.replaceChildren(emptyState('⚠️', 'Connection error', message));
+}
+
+async function login() {
+  const password = passwordInput.value;
+  authError.textContent = '';
+  loginBtn.disabled = true;
+
+  try {
+    await fetchJson('/api/auth', {
+      method: 'POST',
+      body: JSON.stringify({ password })
+    });
+    passwordInput.value = '';
+    await startApp();
+  } catch (err) {
+    authError.textContent = err.message || 'Unauthorized';
+    passwordInput.select();
+  } finally {
+    loginBtn.disabled = false;
+  }
 }
 
 async function loadConfig() {
@@ -162,6 +219,83 @@ async function loadMessages() {
   messageList.replaceChildren(...messages.map(renderMessage));
 }
 
+function renderApiKey(key) {
+  const row = document.createElement('div');
+  row.className = 'api-key-row';
+
+  const meta = document.createElement('div');
+  const name = document.createElement('strong');
+  name.textContent = key.name;
+  const details = document.createElement('span');
+  details.textContent = `${key.key_prefix}… • created ${new Date(key.created_at).toLocaleString()}${key.last_used_at ? ` • used ${new Date(key.last_used_at).toLocaleString()}` : ''}`;
+  meta.append(name, details);
+
+  const revoke = document.createElement('button');
+  revoke.className = 'danger small';
+  revoke.textContent = 'Revoke';
+  revoke.addEventListener('click', async () => {
+    if (!confirm(`Revoke API key ${key.name}?`)) return;
+    await fetchJson(`/api/api-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' });
+    await loadApiKeys();
+    showToast('API key revoked');
+  });
+
+  row.append(meta, revoke);
+  return row;
+}
+
+async function loadApiKeys() {
+  const keys = await fetchJson('/api/api-keys');
+  apiKeyList.replaceChildren();
+  if (!keys.length) {
+    apiKeyList.replaceChildren(emptyState('🔑', 'No API keys yet', 'Create one for Claude or other agents.'));
+    return;
+  }
+  apiKeyList.replaceChildren(...keys.map(renderApiKey));
+}
+
+function showCreatedApiKey(key) {
+  const title = document.createElement('strong');
+  title.textContent = 'Copy this key now. It will not be shown again.';
+  const code = document.createElement('code');
+  code.textContent = key.key;
+  const copy = document.createElement('button');
+  copy.textContent = '📋 Copy key';
+  copy.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(key.key);
+    showToast('API key copied');
+  });
+
+  newApiKeyOutput.classList.remove('hidden');
+  newApiKeyOutput.replaceChildren(title, code, copy);
+}
+
+async function createApiKey() {
+  const name = apiKeyNameInput.value.trim();
+  if (!name) return showToast('Enter a key name');
+
+  createApiKeyBtn.disabled = true;
+  try {
+    const key = await fetchJson('/api/api-keys', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+    apiKeyNameInput.value = '';
+    showCreatedApiKey(key);
+    await loadApiKeys();
+  } finally {
+    createApiKeyBtn.disabled = false;
+  }
+}
+
+async function startApp() {
+  await loadConfig();
+  await ensureSession();
+  showApp();
+  await loadInboxes();
+  await loadApiKeys();
+}
+
 function showToast(text) {
   const tc = document.getElementById('toastContainer');
   const el = document.createElement('div');
@@ -170,6 +304,11 @@ function showToast(text) {
   tc.appendChild(el);
   setTimeout(() => { el.classList.add('fadeout'); setTimeout(() => el.remove(), 200); }, 1800);
 }
+
+loginBtn.addEventListener('click', login);
+passwordInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') login();
+});
 
 copyBtn.addEventListener('click', async () => {
   if (!inboxSelect.value) return;
@@ -210,7 +349,16 @@ createRandomBtn.addEventListener('click', async () => {
   await loadInboxes(inbox.address);
 });
 
-Promise.all([loadConfig(), ensureSession()]).then(() => loadInboxes()).catch((err) => {
+createApiKeyBtn.addEventListener('click', () => createApiKey().catch((err) => showToast(err.message)));
+apiKeyNameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') createApiKey().catch((err) => showToast(err.message));
+});
+
+startApp().catch((err) => {
+  if (err.message === 'Unauthorized' || err.message === 'Auth not configured') {
+    showLogin(err.message === 'Auth not configured' ? 'Server auth is not configured.' : '');
+    return;
+  }
   console.error(err);
-  showError(err.message);
+  showLogin(err.message);
 });

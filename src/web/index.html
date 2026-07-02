@@ -8,7 +8,18 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="app">
+    <section class="auth-gate" id="authGate">
+      <div class="auth-card">
+        <div class="auth-badge">Private access</div>
+        <h1>Pakuan Mail</h1>
+        <p>Enter your password to manage private disposable inboxes.</p>
+        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
+        <button id="loginBtn">Unlock inbox</button>
+        <div class="auth-error" id="authError" role="alert"></div>
+      </div>
+    </section>
+
+    <div class="app hidden" id="mainApp">
       <header>
         <h1 id="appTitle">Pakuan Mail</h1>
         <p id="appSubtitle">Private disposable inbox</p>
@@ -35,6 +46,19 @@
           <span id="messageCount">0 messages</span>
         </div>
         <div id="messageList" class="message-list"></div>
+      </section>
+
+      <section class="panel api-keys-panel">
+        <div class="panel-head">
+          <h2>API Keys</h2>
+          <span>Agents</span>
+        </div>
+        <div class="api-key-create">
+          <input id="apiKeyNameInput" placeholder="Key name, e.g. Claude agent" maxlength="64" />
+          <button id="createApiKeyBtn">＋ Create key</button>
+        </div>
+        <div id="newApiKeyOutput" class="api-key-output hidden"></div>
+        <div id="apiKeyList" class="api-key-list"></div>
       </section>
 
       <footer>

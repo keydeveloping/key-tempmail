@@ -1,6 +1,6 @@
-# Tempik API
+# Pakuan Mail API
 
-Tempik exposes a REST API for session management, inbox operations, and message retrieval. All endpoints live under `/api/`.
+Pakuan Mail exposes a private REST API for session management, inbox operations, and message retrieval. All endpoints live under `/api/`.
 
 **Base URL:** `https://YOUR_DOMAIN/api/`
 
@@ -8,27 +8,136 @@ Tempik exposes a REST API for session management, inbox operations, and message 
 
 ## Authentication
 
-Tempik uses **anonymous session tokens** — no login required.
+Pakuan Mail has two auth layers:
 
-1. Call `GET /api/session` to obtain a `sessionId`
-2. Pass `x-session-id` header on all subsequent requests
-3. Inboxes are scoped to the session: Browser A cannot see Browser B's inboxes
+1. **Private app auth** — every API request requires either:
+   - a browser auth cookie from `POST /api/auth`, or
+   - `Authorization: Bearer <PAKUAN_API_KEY>` for agents/scripts. Generate keys in the Web UI after browser login.
+2. **Anonymous inbox session** — after private auth, call `GET /api/session` to obtain a `sessionId`, then pass `x-session-id` on inbox/message requests.
+
+Inboxes are scoped to the session: Browser A cannot see Browser B's inboxes. Agents should keep and reuse their own `sessionId`.
+
+Agent requests must include:
+
+```http
+Authorization: Bearer <PAKUAN_API_KEY>
+```
+
+Browser requests use the HttpOnly cookie from `POST /api/auth` instead. API keys can be revoked individually from the Web UI; revoked keys immediately return `401`.
 
 ---
 
 ## Endpoints
 
+### POST `/api/auth`
+
+Authenticates browser access with the private password and sets an HttpOnly auth cookie.
+
+**Request Body**
+
+```json
+{ "password": "your-password" }
+```
+
+**Response** `200 OK`
+
+```json
+{ "ok": true }
+```
+
+**Errors**
+
+| Status | Message | Meaning |
+|---|---|---|
+| `401` | `Unauthorized` | Wrong password |
+| `500` | `Auth not configured` | Worker secrets are missing |
+
+---
+
+### POST `/api/logout`
+
+Clears the browser auth cookie.
+
+**Response** `200 OK`
+
+```json
+{ "ok": true }
+```
+
+---
+
+### GET `/api/api-keys`
+
+Lists active API keys. Requires browser cookie auth; bearer API keys cannot manage keys.
+
+**Response** `200 OK`
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Claude agent",
+    "key_prefix": "pmail_sk_abc123...",
+    "created_at": "2026-07-02 09:00:00",
+    "last_used_at": null
+  }
+]
+```
+
+---
+
+### POST `/api/api-keys`
+
+Creates an API key. The raw key is returned once; copy it immediately.
+
+**Request Body**
+
+```json
+{ "name": "Claude agent" }
+```
+
+**Response** `201 Created`
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Claude agent",
+  "key": "pmail_sk_...",
+  "key_prefix": "pmail_sk_abc123...",
+  "created_at": "2026-07-02 09:00:00",
+  "last_used_at": null
+}
+```
+
+---
+
+### DELETE `/api/api-keys/:id`
+
+Revokes an API key. Requires browser cookie auth; bearer API keys cannot revoke keys.
+
+**Response** `200 OK`
+
+```json
+{ "ok": true }
+```
+
+---
+
 ### GET `/api/config`
 
 Returns the public app configuration.
 
-**Headers:** none
+**Headers**
+
+| Header | Required | Description |
+|---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 
 **Response** `200 OK`
 
 ```json
 {
-  "appName": "Tempik",
+  "appName": "Pakuan Mail",
   "mailDomain": "example.com",
   "mailDomains": ["example.com", "another-domain.my.id"],
   "webHost": "tempik.example.com"
@@ -52,6 +161,7 @@ Creates or retrieves an anonymous browser session. If you don't pass `x-session-
 
 | Header | Required | Description |
 |---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 | `x-session-id` | No | Existing session ID (UUID v4). Omit to create a new session. |
 
 **Response** `200 OK`
@@ -66,10 +176,12 @@ Creates or retrieves an anonymous browser session. If you don't pass `x-session-
 
 ```bash
 # Create a new session
-curl -s https://YOUR_DOMAIN/api/session
+curl -s https://YOUR_DOMAIN/api/session \
+  -H "Authorization: Bearer $PAKUAN_API_KEY"
 
 # Reuse an existing session
 curl -s https://YOUR_DOMAIN/api/session \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000"
 ```
 
@@ -83,6 +195,7 @@ Lists all inboxes linked to your session.
 
 | Header | Required | Description |
 |---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 | `x-session-id` | **Yes** | Session ID from `/api/session` |
 
 **Response** `200 OK`
@@ -101,12 +214,13 @@ Lists all inboxes linked to your session.
 | Status | Message | Meaning |
 |---|---|---|
 | `400` | `Missing x-session-id` / `Invalid x-session-id` | No session header or malformed UUID provided |
-| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `401` | `Unauthorized` / `Unknown session` | Missing private auth, or session ID was not created by `/api/session` |
 
 **Usage**
 
 ```bash
 curl -s https://YOUR_DOMAIN/api/inboxes \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000"
 ```
 
@@ -120,6 +234,7 @@ Creates a new inbox and links it to your session. Existing inboxes cannot be cla
 
 | Header | Required | Description |
 |---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 | `x-session-id` | **Yes** | Session ID |
 | `Content-Type` | Yes | `application/json` |
 
@@ -168,7 +283,7 @@ Creates a new inbox and links it to your session. Existing inboxes cannot be cla
 | Status | Message | Meaning |
 |---|---|---|
 | `400` | `Missing x-session-id` / `Invalid x-session-id` | No session header or malformed UUID provided |
-| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `401` | `Unauthorized` / `Unknown session` | Missing private auth, or session ID was not created by `/api/session` |
 | `400` | `Invalid domain: ...` / `Invalid localPart...` | Requested domain or username is invalid. |
 | `409` | `Inbox unavailable` | The requested custom inbox already exists outside this session. |
 | `429` | `Rate limit exceeded` | Too many inbox creation attempts. |
@@ -184,12 +299,14 @@ Creates a new inbox and links it to your session. Existing inboxes cannot be cla
 ```bash
 # Create with custom name
 curl -s -X POST https://YOUR_DOMAIN/api/inboxes \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000" \
   -H "Content-Type: application/json" \
   -d '{"localPart":"myinbox"}'
 
 # Create random
 curl -s -X POST https://YOUR_DOMAIN/api/inboxes \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -205,6 +322,7 @@ Removes an inbox from your session. If no other session links to that inbox, its
 
 | Header | Required | Description |
 |---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 | `x-session-id` | **Yes** | Session ID |
 
 **Path Parameters**
@@ -224,13 +342,14 @@ Removes an inbox from your session. If no other session links to that inbox, its
 | Status | Message | Meaning |
 |---|---|---|
 | `400` | `Missing x-session-id` / `Invalid x-session-id` / `Invalid address` | Missing or invalid request data |
-| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `401` | `Unauthorized` / `Unknown session` | Missing private auth, or session ID was not created by `/api/session` |
 | `403` | `Inbox not in this session` | The inbox is not linked to your session |
 
 **Usage**
 
 ```bash
 curl -s -X DELETE "https://YOUR_DOMAIN/api/inboxes/test123%40example.com" \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000"
 ```
 
@@ -244,6 +363,7 @@ Fetches paginated messages for a given inbox. The inbox must be linked to your s
 
 | Header | Required | Description |
 |---|---|---|
+| `Authorization` | For agents | `Bearer <PAKUAN_API_KEY>`; browsers use the auth cookie from `/api/auth`. |
 | `x-session-id` | **Yes** | Session ID |
 
 **Path Parameters**
@@ -284,7 +404,7 @@ Fetches paginated messages for a given inbox. The inbox must be linked to your s
 | Status | Message | Meaning |
 |---|---|---|
 | `400` | `Missing x-session-id` / `Invalid x-session-id` / `Invalid address` | Missing or invalid request data |
-| `401` | `Unknown session` | Session ID was not created by `/api/session` |
+| `401` | `Unauthorized` / `Unknown session` | Missing private auth, or session ID was not created by `/api/session` |
 | `403` | `Inbox not in this session` | The inbox is not linked to your session |
 | `403` | `Inbox not in this session` | The inbox is not linked to your session. Existing inboxes cannot be claimed from another session. |
 
@@ -292,6 +412,7 @@ Fetches paginated messages for a given inbox. The inbox must be linked to your s
 
 ```bash
 curl -s "https://YOUR_DOMAIN/api/inboxes/test123%40example.com/messages" \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
   -H "x-session-id: 550e8400-e29b-41d4-a716-446655440000"
 ```
 
@@ -301,12 +422,16 @@ curl -s "https://YOUR_DOMAIN/api/inboxes/test123%40example.com/messages" \
 
 ```bash
 DOMAIN="tempik.YOURDOMAIN.com"
+# Keep this in your shell, never commit it.
+API_KEY="$PAKUAN_API_KEY"
 
 # 1. Get session
-SESSION=$(curl -s https://$DOMAIN/api/session | jq -r '.sessionId')
+SESSION=$(curl -s https://$DOMAIN/api/session \
+  -H "Authorization: Bearer $API_KEY" | jq -r '.sessionId')
 
 # 2. Create an inbox
 INBOX=$(curl -s -X POST https://$DOMAIN/api/inboxes \
+  -H "Authorization: Bearer $API_KEY" \
   -H "x-session-id: $SESSION" \
   -H "Content-Type: application/json" \
   -d '{}' | jq -r '.address')
@@ -315,15 +440,19 @@ echo "Created: $INBOX"
 # 3. ...wait for an email to arrive...
 
 # 4. List inboxes
-curl -s https://$DOMAIN/api/inboxes -H "x-session-id: $SESSION" | jq '.'
+curl -s https://$DOMAIN/api/inboxes \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "x-session-id: $SESSION" | jq '.'
 
 # 5. Read messages
 ENCODED=$(echo -n "$INBOX" | jq -sRr '@uri')
 curl -s "https://$DOMAIN/api/inboxes/$ENCODED/messages" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "x-session-id: $SESSION" | jq '.'
 
 # 6. Delete inbox from session
 curl -s -X DELETE "https://$DOMAIN/api/inboxes/$ENCODED" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "x-session-id: $SESSION"
 ```
 
@@ -342,7 +471,7 @@ All error responses follow this format:
 | Status | When |
 |---|---|
 | `400` | Missing/invalid `x-session-id`, invalid address, invalid domain, or invalid `localPart` |
-| `401` | Unknown session |
+| `401` | Unauthorized private access, or unknown session |
 | `403` | Inbox quota exceeded, or inbox not linked to your session |
 | `404` | Route not found |
 | `409` | Custom inbox is unavailable |
@@ -352,7 +481,7 @@ All error responses follow this format:
 
 ## Session isolation
 
-Tempik uses per-browser anonymous sessions:
+Pakuan Mail uses private access plus per-browser anonymous sessions:
 
 | Scenario | Behavior |
 |---|---|

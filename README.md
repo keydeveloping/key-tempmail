@@ -146,12 +146,13 @@ Push the schema to your **remote** D1 database on Cloudflare:
 npx wrangler d1 execute tempik-db --remote --file=src/db/schema.sql
 ```
 
-This creates five tables:
+This creates six tables:
 - `inboxes` — email addresses
 - `messages` — received emails
 - `sessions` — browser session tokens
 - `session_inboxes` — which inboxes belong to which session
 - `rate_limits` — short-lived API rate-limit counters
+- `api_keys` — hashed agent API keys and revocation metadata
 
 > **Note:** The `--remote` flag is important — without it, the schema only applies locally. You want it on Cloudflare's servers.
 
@@ -280,6 +281,31 @@ Catch-all rule:
 | `npx wrangler tail` | Stream live logs from production |
 | `npx wrangler d1 execute tempik-db --remote --command="SELECT * FROM messages LIMIT 10"` | Query the database |
 
+### Set private access secrets
+
+```bash
+npx wrangler secret put TEMPIK_PASSWORD
+npx wrangler secret put TEMPIK_AUTH_SECRET
+```
+
+Use `TEMPIK_PASSWORD` for the browser login. After login, create per-agent API keys in the Web UI. Deleted keys are revoked immediately.
+
+### Agent API example
+
+```bash
+# Create PAKUAN_API_KEY in the Web UI first.
+SID=$(curl -sS \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
+  https://tempik.YOURDOMAIN.com/api/session | jq -r .sessionId)
+
+curl -sS \
+  -H "Authorization: Bearer $PAKUAN_API_KEY" \
+  -H "x-session-id: $SID" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"YOURDOMAIN.com"}' \
+  https://tempik.YOURDOMAIN.com/api/inboxes
+```
+
 ### Check if emails are being received
 
 ```bash
@@ -310,7 +336,7 @@ key-tempmail/
     ├── api/
     │   └── routes.ts          # Hono router: /api/config, /api/session, /api/inboxes, /api/messages
     ├── db/
-    │   ├── schema.sql         # D1 tables (inboxes, messages, sessions, session_inboxes, rate_limits)
+    │   ├── schema.sql         # D1 tables (inboxes, messages, sessions, session_inboxes, rate_limits, api_keys)
     │   └── queries.ts         # Typed query functions
     ├── utils/
     │   ├── random-address.ts  # Human-like random email generator
@@ -339,6 +365,10 @@ key-tempmail/
 
 ## Security and privacy defaults
 
+- Browser access is protected by a password gate. Set it with `npx wrangler secret put TEMPIK_PASSWORD`.
+- API access for agents is protected by revocable API keys generated in the Web UI.
+- Browser auth cookies are signed with `TEMPIK_AUTH_SECRET`. Set it with `npx wrangler secret put TEMPIK_AUTH_SECRET`.
+- Never commit real secret values to the repo or `wrangler.toml`.
 - Custom inboxes cannot claim addresses that already exist outside the current session.
 - Session headers must be valid sessions created by `/api/session`.
 - Custom usernames are validated before an email address is created.
