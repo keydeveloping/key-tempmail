@@ -19,6 +19,61 @@ export interface Session {
   created_at: string;
 }
 
+export interface ApiKeyPublic {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+// ---- API keys ----
+
+export async function listApiKeys(db: D1Database): Promise<ApiKeyPublic[]> {
+  return db
+    .prepare(
+      `SELECT id, name, key_prefix, created_at, last_used_at
+       FROM api_keys
+       WHERE revoked_at IS NULL
+       ORDER BY created_at DESC`
+    )
+    .all<ApiKeyPublic>()
+    .then((r) => r.results);
+}
+
+export async function createApiKey(
+  db: D1Database,
+  id: string,
+  name: string,
+  keyHash: string,
+  keyPrefix: string
+): Promise<ApiKeyPublic | null> {
+  await db
+    .prepare('INSERT INTO api_keys (id, name, key_hash, key_prefix) VALUES (?, ?, ?, ?)')
+    .bind(id, name, keyHash, keyPrefix)
+    .run();
+
+  return db
+    .prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys WHERE id = ?')
+    .bind(id)
+    .first<ApiKeyPublic>();
+}
+
+export async function findActiveApiKeyByHash(db: D1Database, keyHash: string): Promise<{ id: string } | null> {
+  return db
+    .prepare('SELECT id FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL LIMIT 1')
+    .bind(keyHash)
+    .first<{ id: string }>();
+}
+
+export async function touchApiKeyUsed(db: D1Database, id: string): Promise<void> {
+  await db.prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?").bind(id).run();
+}
+
+export async function revokeApiKey(db: D1Database, id: string): Promise<void> {
+  await db.prepare("UPDATE api_keys SET revoked_at = datetime('now') WHERE id = ?").bind(id).run();
+}
+
 // ---- Inboxes ----
 
 export async function getInbox(db: D1Database, address: string): Promise<Inbox | null> {
