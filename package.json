@@ -7,6 +7,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "check:validators": "tsc src/utils/email-address.ts src/utils/email-address.selfcheck.ts --module commonjs --moduleResolution node --target es2022 --outDir /tmp/tempik-check && node /tmp/tempik-check/email-address.selfcheck.js",
+    "check:routes": "tsc src/api/routes.selfcheck.ts --module commonjs --moduleResolution node --target es2022 --outDir /tmp/tempik-check && node /tmp/tempik-check/routes.selfcheck.js",
     "db:create": "wrangler d1 create tempik-db",
     "db:migrate": "wrangler d1 execute tempik-db --file=src/db/schema.sql",
     "db:local": "wrangler d1 execute tempik-db --local --file=src/db/schema.sql"

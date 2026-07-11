@@ -185,21 +185,55 @@ async function loadInboxes(selectedAddress) {
   await loadMessages();
 }
 
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function cleanMessageBody(value) {
+  return (value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function renderMessage(msg) {
-  const item = document.createElement('div');
+  const item = document.createElement('article');
   item.className = 'message-item';
 
-  const meta = document.createElement('div');
-  meta.className = 'message-meta';
-  meta.textContent = `From: ${msg.from_address} • ${new Date(msg.received_at).toLocaleString()}`;
+  const header = document.createElement('div');
+  header.className = 'message-header';
 
-  const subject = document.createElement('strong');
+  const sender = document.createElement('div');
+  sender.className = 'message-sender';
+
+  const label = document.createElement('span');
+  label.className = 'message-label';
+  label.textContent = 'From';
+
+  const from = document.createElement('span');
+  from.className = 'message-from';
+  from.textContent = msg.from_address || '(unknown sender)';
+  from.title = msg.from_address || '';
+
+  const date = document.createElement('time');
+  date.className = 'message-date';
+  date.dateTime = msg.received_at || '';
+  date.textContent = formatDate(msg.received_at);
+
+  sender.append(label, from);
+  header.append(sender, date);
+
+  const subject = document.createElement('h3');
+  subject.className = 'message-subject';
   subject.textContent = msg.subject || '(no subject)';
 
   const body = document.createElement('p');
-  body.textContent = msg.body || '';
+  body.className = 'message-body';
+  body.textContent = cleanMessageBody(msg.body);
 
-  item.append(meta, subject, body);
+  item.append(header, subject, body);
   return item;
 }
 

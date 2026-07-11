@@ -425,42 +425,89 @@ header p {
   background: rgba(36, 21, 50, 0.7);
 }
 
-.message-item .message-meta {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-muted);
-  margin-bottom: 8px;
+.message-header {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
 }
 
-.message-item .message-meta::before {
+.message-sender {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.message-sender::before {
   content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--accent-soft);
   box-shadow: 0 0 12px var(--accent-glow);
 }
 
-.message-item strong {
-  display: block;
-  font-size: 14px;
-  font-weight: 700;
-  margin-bottom: 8px;
-  color: var(--text-primary);
-  letter-spacing: -0.2px;
+.message-label,
+.message-date {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
 }
 
-.message-item p {
-  font-size: 13px;
+.message-label {
+  flex: 0 0 auto;
+}
+
+.message-from {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-date {
+  flex: 0 0 auto;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.message-subject {
+  display: -webkit-box;
+  margin-bottom: 10px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: -0.2px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.message-body {
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px 14px;
+  background: rgba(7, 3, 13, 0.42);
+  border: 1px solid rgba(50, 32, 68, 0.72);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  line-height: 1.7;
+}
+
+.message-body:empty {
+  display: none;
 }
 
 /* ---------------------------------- Empty States ---------------------------------- */
@@ -710,6 +757,20 @@ footer a:hover span {
 
   .message-item {
     padding: 14px 14px;
+  }
+
+  .message-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .message-date {
+    text-align: left;
+  }
+
+  .message-body {
+    max-height: 220px;
+    padding: 10px 12px;
   }
 
   .api-key-create,

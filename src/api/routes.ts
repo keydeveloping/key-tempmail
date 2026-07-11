@@ -362,14 +362,13 @@ api.post('/inboxes', async (c) => {
   }
 
   let address: string;
+  let addressExists = false;
   if (requested) {
     address = buildAddress(requested, domain);
-    if (await inboxExists(c.env.DB, address)) {
-      if (await isInboxInSession(c.env.DB, sid, address)) {
-        const inbox = await getInbox(c.env.DB, address);
-        return c.json(inbox, 200);
-      }
-      return c.json({ error: 'Inbox unavailable' }, 409);
+    addressExists = await inboxExists(c.env.DB, address);
+    if (addressExists && await isInboxInSession(c.env.DB, sid, address)) {
+      const inbox = await getInbox(c.env.DB, address);
+      return c.json(inbox, 200);
     }
   } else {
     address = await generateUniqueAddress(
@@ -382,11 +381,12 @@ api.post('/inboxes', async (c) => {
     return c.json({ error: `Inbox quota exceeded. Max ${MAX_INBOXES_PER_SESSION} inboxes per session.` }, 403);
   }
 
-  await createInbox(c.env.DB, address);
+  // ponytail: password-gated single-user app may reattach existing inboxes; add per-user ownership before multi-user.
+  if (!addressExists) await createInbox(c.env.DB, address);
   await linkInboxToSession(c.env.DB, sid, address);
 
   const inbox = await getInbox(c.env.DB, address);
-  return c.json(inbox!, 201);
+  return c.json(inbox!, addressExists ? 200 : 201);
 });
 
 // ---- DELETE /api/inboxes/:address ----
